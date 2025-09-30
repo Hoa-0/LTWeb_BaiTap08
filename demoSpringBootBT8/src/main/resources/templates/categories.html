@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8" />
+<title>Categories - VN IOTSTAR</title>
+<link
+	href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+	rel="stylesheet" />
+<style>
+.thumb {
+	max-width: 100px;
+	max-height: 80px;
+	object-fit: cover
+}
+
+.container {
+	padding-top: 20px
+}
+</style>
+</head>
+<body>
+	<div class="container">
+		<h1 class="mb-3">Categories</h1>
+
+		<div class="card mb-4">
+			<div class="card-body">
+				<h5 class="card-title">Create category</h5>
+				<div class="row g-2" id="createCategoryBlock">
+					<div class="col-md-4">
+						<input class="form-control" type="text" id="catName"
+							placeholder="Name" />
+					</div>
+					<div class="col-md-4">
+						<input class="form-control" type="file" id="catImageFile"
+							accept="image/*" />
+					</div>
+					<div class="col-md-4">
+						<button type="button" class="btn btn-primary"
+							onclick="onCreateCategory()">Create</button>
+						<button type="button" class="btn btn-secondary"
+							onclick="refreshCategories()">Refresh</button>
+					</div>
+				</div>
+				<div class="mt-2 text-muted small">If you upload an image it
+					will be saved and the URL stored in 'images'.</div>
+				<div id="catMessage" class="mt-2"></div>
+			</div>
+		</div>
+
+		<div class="table-responsive">
+			<table class="table table-bordered align-middle">
+				<thead class="table-light">
+					<tr>
+						<th>ID</th>
+						<th>Name</th>
+						<th>Image</th>
+						<th>Actions</th>
+					</tr>
+				</thead>
+				<tbody id="catsTbody"></tbody>
+			</table>
+		</div>
+	</div>
+
+	<script>
+function dbg(...a){ try{ console.log(...a); } catch(e){} }
+function showMsg(txt, type='info'){ const el = document.getElementById('catMessage'); el.innerText = txt; el.style.color = (type==='err'?'#c00':'#080'); }
+
+/* Upload helper -> POST /upload (multipart) -> returns url or throws */
+async function uploadFile(file){
+    if(!file) return null;
+    const fd = new FormData();
+    fd.append('file', file);
+    dbg('Uploading file to /upload', file.name, file.size);
+    const resp = await fetch('/upload', { method: 'POST', body: fd });
+    dbg('/upload response status', resp.status);
+    const json = await resp.json().catch(()=>null);
+    dbg('/upload response body', json);
+    if(!resp.ok){
+        const err = (json && json.error) ? json.error : resp.statusText;
+        throw new Error('Upload failed: ' + err);
+    }
+    if(!json || !json.url) throw new Error('Upload did not return URL');
+    return json.url;
+}
+
+/* Create category (called by button) */
+async function onCreateCategory(){
+    showMsg('', 'info');
+    const name = (document.getElementById('catName').value || '').trim();
+    const fileInput = document.getElementById('catImageFile');
+    if(!name){ showMsg('Name required', 'err'); return; }
+
+    try {
+        let imageUrl = null;
+        if(fileInput.files && fileInput.files[0]){
+            // first upload image to /upload
+            imageUrl = await uploadFile(fileInput.files[0]);
+            dbg('uploaded image url=', imageUrl);
+        }
+
+        const query = `mutation($n:String!, $img:String){ createCategory(name:$n, images:$img){ id name images } }`;
+        const body = JSON.stringify({ query, variables: { n: name, img: imageUrl }});
+        dbg('POST /graphql createCategory body', body);
+
+        const res = await fetch('/graphql', { method: 'POST', headers: {'Content-Type':'application/json'}, body });
+        const result = await res.json().catch(()=>null);
+        dbg('createCategory result', res.status, result);
+
+        if(!res.ok || (result && result.errors)){
+            const err = (result && result.errors) ? JSON.stringify(result.errors) : res.statusText;
+            showMsg('Create failed: ' + err, 'err');
+            return;
+        }
+
+        // success
+        showMsg('Category created', 'info');
+        document.getElementById('catName').value = '';
+        fileInput.value = '';
+        await refreshCategories();
+    } catch (err) {
+        console.error('Error creating category', err);
+        showMsg(err.message || 'Upload/Create error', 'err');
+    }
+}
+
+/* Refresh list */
+async function refreshCategories(){
+    const q = "{ allCategories { id name images } }";
+    const res = await fetch('/graphql', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query: q})});
+    const json = await res.json().catch(()=>null);
+    const cats = json && json.data ? json.data.allCategories : [];
+    const tbody = document.getElementById('catsTbody');
+    if(!cats || cats.length===0){
+        tbody.innerHTML = '<tr><td colspan="4">No categories</td></tr>';
+        return;
+    }
+    tbody.innerHTML = cats.map(c => `
+        <tr>
+            <td>${c.id}</td>
+            <td>${escapeHtml(c.name||'')}</td>
+            <td>${c.images ? `<img src="${c.images}" class="thumb" alt="img"/>` : ''}</td>
+            <td>
+                <button class="btn btn-sm btn-info me-1" onclick="editCategory(${c.id}, '${escapeJs(c.name||'')}', '${c.images||''}')">Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteCategory(${c.id})">Delete</button>
+            </td>
+        </tr>`).join('');
+}
+
+/* Delete/Edit similar to before */
+async function deleteCategory(id){
+    if(!confirm('Delete category #' + id + '?')) return;
+    const query = `mutation($id: ID!){ deleteCategory(id:$id) }`;
+    const res = await fetch('/graphql', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query, variables:{id}})});
+    const json = await res.json().catch(()=>null);
+    dbg('deleteCategory', json);
+    await refreshCategories();
+}
+
+async function editCategory(id, currentName, currentImage){
+    const newName = prompt('New name:', currentName);
+    if(newName === null) return;
+    let newImage = currentImage;
+    if(confirm('Upload new image?')){
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = 'image/*';
+        input.onchange = async () => {
+            if(input.files && input.files[0]){
+                try {
+                    const url = await uploadFile(input.files[0]);
+                    if(url) newImage = url;
+                } catch(e){
+                    alert('Upload failed: ' + e.message);
+                    return;
+                }
+            }
+            await updateCategory(id, newName, newImage);
+        };
+        input.click();
+    } else {
+        await updateCategory(id, newName, newImage);
+    }
+}
+
+async function updateCategory(id, name, images){
+    const q = `mutation($id: ID!, $name:String, $images:String){ updateCategory(id:$id, name:$name, images:$images) { id name images } }`;
+    const res = await fetch('/graphql', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query: q, variables:{ id, name, images } }) });
+    const json = await res.json().catch(()=>null);
+    dbg('updateCategory', json);
+    await refreshCategories();
+}
+
+/* helpers */
+function escapeHtml(s){ return s ? s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : ''; }
+function escapeJs(s){ return s ? s.replace(/'/g,"\\'").replace(/\n/g,"\\n") : ''; }
+
+/* init */
+refreshCategories();
+</script>
+</body>
+</html>

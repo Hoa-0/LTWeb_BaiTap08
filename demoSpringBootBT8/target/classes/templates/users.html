@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8" />
+<title>Users - VN IOTSTAR</title>
+<link
+	href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+	rel="stylesheet" />
+<style>
+.container {
+	padding-top: 20px;
+}
+
+.card {
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+</style>
+</head>
+<body>
+	<div class="container">
+		<h1 class="mb-3">Users</h1>
+
+		<div class="card mb-4">
+			<div class="card-body">
+				<h5 class="card-title">Create user</h5>
+				<div class="row g-2 align-items-center">
+					<div class="col-md-3">
+						<input id="fullname" class="form-control" placeholder="Fullname" />
+					</div>
+					<div class="col-md-3">
+						<input id="email" class="form-control" placeholder="Email"
+							type="email" />
+					</div>
+					<div class="col-md-2">
+						<input id="password" class="form-control" placeholder="Password"
+							type="password" />
+					</div>
+					<div class="col-md-2">
+						<input id="phone" class="form-control" placeholder="Phone" />
+					</div>
+					<div class="col-md-2">
+						<button type="button" class="btn btn-primary"
+							onclick="onCreateUser()">Create</button>
+						<button type="button" class="btn btn-secondary"
+							onclick="refreshUsers()">Refresh</button>
+					</div>
+				</div>
+				<div id="userMessage" class="mt-2 small text-muted"></div>
+			</div>
+		</div>
+
+		<div class="card">
+			<div class="card-body p-0">
+				<table class="table table-striped table-hover mb-0">
+					<thead class="table-light">
+						<tr>
+							<th>ID</th>
+							<th>Fullname</th>
+							<th>Email</th>
+							<th>Phone</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="usersTbody">
+						<!-- will be rendered by JS -->
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<script
+		src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+	<script>
+/* ---------- Helpers ---------- */
+function dbg(...args){ try { console.log(...args); } catch(e){} }
+function showUserMsg(text, type='info') {
+    const el = document.getElementById('userMessage');
+    el.innerText = text;
+    el.style.color = (type === 'err' ? '#c00' : '#080');
+}
+
+/* ---------- GraphQL helpers ---------- */
+async function gql(query, variables = {}) {
+    const res = await fetch('/graphql', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ query, variables })
+    });
+    const json = await res.json().catch(()=>null);
+    if (!res.ok) throw new Error('Network error: ' + res.status);
+    if (json && json.errors) {
+        dbg('GraphQL errors', json.errors);
+        throw new Error(JSON.stringify(json.errors));
+    }
+    return json ? json.data : null;
+}
+
+/* ---------- Users actions ---------- */
+async function refreshUsers(){
+    showUserMsg('Loading users...');
+    try {
+        const data = await gql("{ allUsers { id fullname email phone } }");
+        const users = data && data.allUsers ? data.allUsers : [];
+        const tbody = document.getElementById('usersTbody');
+        if (users.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center">No users</td></tr>`;
+        } else {
+            tbody.innerHTML = users.map(u => `
+                <tr>
+                    <td>${u.id}</td>
+                    <td>${escapeHtml(u.fullname)}</td>
+                    <td>${escapeHtml(u.email)}</td>
+                    <td>${escapeHtml(u.phone || '')}</td>
+                    <td>
+                        <button class="btn btn-sm btn-info me-1" onclick="editUser(${u.id}, '${escapeJs(u.fullname)}','${escapeJs(u.email)}','${escapeJs(u.phone||'')}')">Edit</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})">Delete</button>
+                    </td>
+                </tr>`).join('');
+        }
+        showUserMsg('Loaded ' + users.length + ' users.');
+    } catch (err) {
+        dbg('refreshUsers error', err);
+        showUserMsg('Failed to load users: ' + err.message, 'err');
+    }
+}
+
+async function onCreateUser(){
+    showUserMsg('');
+    const fullname = (document.getElementById('fullname').value || '').trim();
+    const email = (document.getElementById('email').value || '').trim();
+    const password = (document.getElementById('password').value || '').trim();
+    const phone = (document.getElementById('phone').value || '').trim();
+
+    if (!fullname || !email || !password) { showUserMsg('Fullname, email and password are required', 'err'); return; }
+
+    const query = `mutation($fn:String!, $em:String!, $pw:String!, $ph:String){ createUser(fullname:$fn, email:$em, password:$pw, phone:$ph){ id fullname email phone } }`;
+    try {
+        await gql(query, { fn: fullname, em: email, pw: password, ph: phone });
+        showUserMsg('User created');
+        document.getElementById('fullname').value = '';
+        document.getElementById('email').value = '';
+        document.getElementById('password').value = '';
+        document.getElementById('phone').value = '';
+        await refreshUsers();
+    } catch (err) {
+        dbg('createUser error', err);
+        showUserMsg('Create user failed: ' + err.message, 'err');
+    }
+}
+
+async function deleteUser(id){
+    if (!confirm('Delete user #' + id + '?')) return;
+    const query = `mutation($id: ID!){ deleteUser(id:$id) }`;
+    try {
+        await gql(query, { id });
+        await refreshUsers();
+    } catch (err) {
+        dbg('deleteUser error', err);
+        showUserMsg('Delete failed: ' + err.message, 'err');
+    }
+}
+
+async function editUser(id, fullname, email, phone){
+    const newFullname = prompt('Fullname:', fullname);
+    if (newFullname === null) return;
+    const newEmail = prompt('Email:', email);
+    if (newEmail === null) return;
+    const newPhone = prompt('Phone:', phone);
+    if (newPhone === null) return;
+
+    const query = `mutation($id:ID!, $fullname:String, $email:String, $phone:String){ updateUser(id:$id, fullname:$fullname, email:$email, phone:$phone){ id fullname email phone } }`;
+    try {
+        await gql(query, { id, fullname: newFullname, email: newEmail, phone: newPhone });
+        await refreshUsers();
+    } catch (err) {
+        dbg('editUser error', err);
+        showUserMsg('Update failed: ' + err.message, 'err');
+    }
+}
+
+/* ---------- Helpers ---------- */
+function escapeHtml(s){ return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : ''; }
+function escapeJs(s){ return s ? s.replace(/'/g,"\\'").replace(/\n/g,"\\n") : ''; }
+
+/* ---------- Init ---------- */
+refreshUsers();
+</script>
+</body>
+</html>

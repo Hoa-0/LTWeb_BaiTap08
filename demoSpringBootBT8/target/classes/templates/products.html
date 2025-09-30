@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8" />
+<title>Products - VN IOTSTAR</title>
+<link
+	href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+	rel="stylesheet" />
+<style>
+.thumb {
+	max-width: 100px;
+	max-height: 80px;
+	object-fit: cover;
+}
+
+.container {
+	padding-top: 20px;
+}
+
+.card {
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+</style>
+</head>
+<body>
+	<div class="container">
+		<h1 class="mb-3">Products</h1>
+
+		<div class="card mb-4">
+			<div class="card-body">
+				<h5 class="card-title">Create product</h5>
+				<div class="row g-2 align-items-center">
+					<div class="col-md-3">
+						<input id="pTitle" class="form-control" placeholder="Title" />
+					</div>
+					<div class="col-md-1">
+						<input id="pQuantity" class="form-control" type="number" value="1"
+							min="0" />
+					</div>
+					<div class="col-md-2">
+						<input id="pPrice" class="form-control" type="number" step="0.01"
+							placeholder="Price" />
+					</div>
+					<div class="col-md-3">
+						<select id="userSelect" class="form-select"></select>
+					</div>
+					<div class="col-md-2">
+						<select id="categorySelectCreate" class="form-select"></select>
+					</div>
+					<div class="col-12">
+						<input id="pDescription" class="form-control"
+							placeholder="Description" />
+					</div>
+					<div class="col-md-3">
+						<input id="pImageFile" class="form-control" type="file"
+							accept="image/*" />
+					</div>
+					<div class="col-md-3">
+						<button type="button" class="btn btn-primary"
+							onclick="onCreateProduct()">Create</button>
+						<button type="button" class="btn btn-secondary"
+							onclick="loadProductsSorted()">Refresh</button>
+					</div>
+				</div>
+				<div id="productMessage" class="mt-2 small text-muted"></div>
+			</div>
+		</div>
+
+		<div class="mb-3 d-flex align-items-center">
+			<button class="btn btn-outline-primary me-2"
+				onclick="loadProductsSorted()">Load (price ↑)</button>
+			<select id="categorySelect" class="form-select w-auto"
+				onchange="loadProductsByCategory()">
+				<option value="">--Select Category--</option>
+			</select>
+		</div>
+
+		<div class="card">
+			<div class="card-body p-0">
+				<table class="table table-striped mb-0">
+					<thead class="table-light">
+						<tr>
+							<th>ID</th>
+							<th>Title</th>
+							<th>Price</th>
+							<th>Qty</th>
+							<th>Category</th>
+							<th>User</th>
+							<th>Image</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="productsTbody"></tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	<script
+		src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+	<script>
+/* ---------- Helpers ---------- */
+function dbg(...a){ try{ console.log(...a); } catch(e){} }
+function showProductMsg(txt, type='info'){ const el = document.getElementById('productMessage'); el.innerText = txt; el.style.color = (type==='err'?'#c00':'#080'); }
+
+/* ---------- GraphQL helper ---------- */
+async function gql(query, variables = {}) {
+    const res = await fetch('/graphql', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ query, variables })
+    });
+    const json = await res.json().catch(()=>null);
+    if (!res.ok) throw new Error('Network error: ' + res.status);
+    if (json && json.errors) {
+        dbg('GraphQL errors', json.errors);
+        throw new Error(JSON.stringify(json.errors));
+    }
+    return json ? json.data : null;
+}
+
+/* ---------- Upload helper ---------- */
+async function uploadFile(file){
+    if(!file) return null;
+    const fd = new FormData(); fd.append('file', file);
+    dbg('Uploading file', file.name, file.size);
+    const resp = await fetch('/upload', { method: 'POST', body: fd });
+    const json = await resp.json().catch(()=>null);
+    dbg('/upload', resp.status, json);
+    if(!resp.ok) {
+        const err = (json && json.error) ? json.error : resp.statusText;
+        throw new Error('Upload failed: ' + err);
+    }
+    if(!json || !json.url) throw new Error('Upload did not return URL');
+    return json.url;
+}
+
+/* ---------- Load selects ---------- */
+async function loadSelects(){
+    try {
+        const data = await gql("{ allCategories { id name } allUsers { id fullname } }");
+        const cats = data.allCategories || [];
+        const users = data.allUsers || [];
+        document.getElementById('categorySelectCreate').innerHTML = cats.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        document.getElementById('categorySelect').innerHTML = `<option value="">--Select Category--</option>` + cats.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        document.getElementById('userSelect').innerHTML = users.map(u => `<option value="${u.id}">${escapeHtml(u.fullname)}</option>`).join('');
+    } catch (err) {
+        dbg('loadSelects error', err);
+    }
+}
+
+/* ---------- Products actions ---------- */
+function renderProducts(list){
+    const tbody = document.getElementById('productsTbody');
+    tbody.innerHTML = (list || []).map(p => `
+        <tr>
+            <td>${p.id}</td>
+            <td>${escapeHtml(p.title)}</td>
+            <td>${p.price}</td>
+            <td>${p.quantity}</td>
+            <td>${p.category ? escapeHtml(p.category.name) : ''}</td>
+            <td>${p.user ? escapeHtml(p.user.fullname) : ''}</td>
+            <td>${p.description ? (p.description.startsWith('/uploads/') ? `<img src="${p.description}" class="thumb" />` : escapeHtml(p.description)) : ''}</td>
+            <td>
+                <button class="btn btn-sm btn-info me-1" onclick="editProduct(${p.id})">Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteProduct(${p.id})">Delete</button>
+            </td>
+        </tr>`).join('');
+}
+
+async function loadProductsSorted(){
+    showProductMsg('Loading...');
+    await loadSelects();
+    try {
+        const data = await gql("{ productsSortedByPriceAsc { id title price quantity description category { id name } user { id fullname } } }");
+        renderProducts(data.productsSortedByPriceAsc || []);
+        showProductMsg('Loaded products');
+    } catch (err) {
+        dbg('loadProductsSorted error', err);
+        showProductMsg('Failed to load products: ' + err.message, 'err');
+    }
+}
+
+async function loadProductsByCategory(){
+    const catId = document.getElementById('categorySelect').value;
+    if(!catId){ document.getElementById('productsTbody').innerHTML = ''; return; }
+    try {
+        const query = `query($c: ID!){ productsByCategory(categoryId:$c){ id title price quantity description category{ id name } user { id fullname } } }`;
+        const data = await gql(query, { c: parseInt(catId) });
+        renderProducts(data.productsByCategory || []);
+        showProductMsg('Loaded products by category');
+    } catch (err) {
+        dbg('loadProductsByCategory error', err);
+        showProductMsg('Failed to load by category: ' + err.message, 'err');
+    }
+}
+
+async function onCreateProduct(){
+    showProductMsg('');
+    const title = (document.getElementById('pTitle').value || '').trim();
+    const quantity = parseInt(document.getElementById('pQuantity').value) || 0;
+    const price = parseFloat(document.getElementById('pPrice').value) || 0;
+    const description = (document.getElementById('pDescription').value || '').trim();
+    const userId = parseInt(document.getElementById('userSelect').value);
+    const categoryId = parseInt(document.getElementById('categorySelectCreate').value);
+
+    if (!title) { showProductMsg('Title required', 'err'); return; }
+    if (!userId || !categoryId) { showProductMsg('User and Category required', 'err'); return; }
+
+    let imgUrl = null;
+    const fileInput = document.getElementById('pImageFile');
+    try {
+        if (fileInput.files && fileInput.files[0]) {
+            imgUrl = await uploadFile(fileInput.files[0]);
+            dbg('imgUrl', imgUrl);
+        }
+
+        const descToStore = imgUrl ? imgUrl : description;
+        const query = `mutation($title:String!, $quantity:Int!, $desc:String, $price:Float!, $userId:ID!, $categoryId:ID!){ createProduct(title:$title, quantity:$quantity, description:$desc, price:$price, userId:$userId, categoryId:$categoryId){ id title } }`;
+        await gql(query, { title, quantity, desc: descToStore, price, userId, categoryId });
+
+        // reset form
+        document.getElementById('pTitle').value = '';
+        document.getElementById('pQuantity').value = '1';
+        document.getElementById('pPrice').value = '';
+        document.getElementById('pDescription').value = '';
+        document.getElementById('pImageFile').value = '';
+        showProductMsg('Product created');
+        await loadProductsSorted();
+    } catch (err) {
+        dbg('onCreateProduct error', err);
+        showProductMsg('Create product failed: ' + err.message, 'err');
+    }
+}
+
+async function deleteProduct(id){
+    if (!confirm('Delete product #' + id + '?')) return;
+    const query = `mutation($id: ID!){ deleteProduct(id:$id) }`;
+    try {
+        await gql(query, { id });
+        await loadProductsSorted();
+    } catch (err) {
+        dbg('deleteProduct error', err);
+        showProductMsg('Delete failed: ' + err.message, 'err');
+    }
+}
+
+async function editProduct(id){
+    const newTitle = prompt('New title:');
+    if (newTitle === null) return;
+    const newPrice = prompt('New price:');
+    if (newPrice === null) return;
+    const query = `mutation($id: ID!, $title:String, $price:Float){ updateProduct(id:$id, title:$title, price:$price){ id title price } }`;
+    try {
+        await gql(query, { id, title: newTitle, price: parseFloat(newPrice) });
+        await loadProductsSorted();
+    } catch (err) {
+        dbg('editProduct error', err);
+        showProductMsg('Update failed: ' + err.message, 'err');
+    }
+}
+
+/* ---------- Helpers ---------- */
+function escapeHtml(s){ return s ? s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : ''; }
+function escapeJs(s){ return s ? s.replace(/'/g,"\\'").replace(/\n/g,"\\n") : ''; }
+
+/* ---------- Init ---------- */
+loadProductsSorted();
+</script>
+</body>
+</html>

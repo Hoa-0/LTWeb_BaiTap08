@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GraphiQL - VN IOTSTAR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- React + ReactDOM -->
+<script crossorigin
+	src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin
+	src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+<!-- GraphiQL CSS -->
+<link rel="stylesheet"
+	href="https://unpkg.com/graphiql/graphiql.min.css" />
+
+<!-- GraphiQL -->
+<script src="https://unpkg.com/graphiql/graphiql.min.js"></script>
+
+<style>
+html, body, #graphiql {
+	height: 100%;
+	margin: 0;
+	width: 100%;
+	overflow: hidden;
+}
+
+.top-bar {
+	padding: 8px;
+	background: #f5f5f5;
+	border-bottom: 1px solid #e0e0e0;
+}
+</style>
+</head>
+<body>
+	<div class="top-bar">
+		<strong>GraphiQL (Interactive)</strong> &nbsp; — Endpoint:
+		<code>/graphql</code>
+		&nbsp;
+		<button id="exampleBtn">Load example query</button>
+	</div>
+	<div id="graphiql">Loading...</div>
+
+	<script>
+		// fetcher function for GraphiQL — posts to /graphql
+		function graphQLFetcher(graphQLParams) {
+			return fetch('/graphql', {
+				method : 'post',
+				headers : {
+					'Accept' : 'application/json',
+					'Content-Type' : 'application/json'
+				},
+				body : JSON.stringify(graphQLParams),
+				credentials : 'same-origin',
+			}).then(function(response) {
+				return response.text();
+			}).then(function(responseBody) {
+				try {
+					return JSON.parse(responseBody);
+				} catch (error) {
+					return responseBody;
+				}
+			});
+		}
+
+		// Render GraphiQL
+		const root = document.getElementById('graphiql');
+		ReactDOM
+				.createRoot(root)
+				.render(
+						React
+								.createElement(
+										GraphiQL,
+										{
+											fetcher : graphQLFetcher,
+											defaultQuery : `# Example queries:\n\n# 1) products sorted by price ascending\n{ \n  productsSortedByPriceAsc { \n    id\n    title\n    price\n  }\n}\n\n# 2) query products by category (replace categoryId value)\n# query ($c: ID!) { productsByCategory(categoryId: $c) { id title price } }\n\n# 3) create a new user (mutation example)\n# mutation { createUser(fullname: \"Test\", email: \"t@example.com\", password: \"123\", phone: \"0123\") { id fullname email } }\n`
+										}));
+
+		// Example button to set a query in the editor
+		document
+				.getElementById('exampleBtn')
+				.addEventListener(
+						'click',
+						function() {
+							const editor = document
+									.querySelector('.graphiql-container .CodeMirror').CodeMirror;
+							const example = `{ productsSortedByPriceAsc { id title price } }`;
+							editor.setValue(example);
+						});
+	</script>
+</body>
+</html>
